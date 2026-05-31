@@ -22,6 +22,7 @@ export default function App() {
   const [connected, setConnected] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
   const identityRef = useRef<Identity | null>(null);
+  const myRoomCodeRef = useRef<string | null>(null);
 
   const {
     screen, setScreen, setIdentity, setRoomCode, setRoom,
@@ -37,10 +38,14 @@ export default function App() {
   useEffect(() => {
     if (conn) return;
 
+    if (localStorage.getItem('stdb_host') !== DB_HOST) {
+      localStorage.removeItem('stdb_token');
+      localStorage.setItem('stdb_host', DB_HOST);
+    }
     const savedToken = localStorage.getItem('stdb_token') ?? undefined;
 
     DbConnection.builder()
-      .withUri(`wss://${DB_HOST}`)
+      .withUri(`ws://${DB_HOST}`)
       .withDatabaseName(DB_NAME)
       .withCompression('none')
       .withConfirmedReads(false)
@@ -55,11 +60,13 @@ export default function App() {
         // Room table
         conn.db.room.onInsert((_ctx: EventContext, room: any) => {
           if (room.adminIdentity.toHexString() === identityRef.current?.toHexString()) {
+            myRoomCodeRef.current = room.roomCode;
             setRoom(room);
             setRoomCode(room.roomCode);
           }
         });
         conn.db.room.onUpdate((_ctx: EventContext, _old: any, newRoom: any) => {
+          if (newRoom.roomCode !== myRoomCodeRef.current) return;
           setRoom(newRoom);
           if (newRoom.status === "ended") setScreen("winner");
           else if (newRoom.status === "playing") setScreen("game");
@@ -67,7 +74,15 @@ export default function App() {
 
         // Player table
         conn.db.player.onInsert((_ctx: EventContext, p: any) => upsertPlayer(p));
-        conn.db.player.onUpdate((_ctx: EventContext, _o: any, p: any) => upsertPlayer(p));
+        conn.db.player.onUpdate((_ctx: EventContext, _o: any, p: any) => {
+          upsertPlayer(p);
+          if (p.identity.toHexString() !== identityRef.current?.toHexString()) return;
+          if (p.roomCode === myRoomCodeRef.current) return;
+          myRoomCodeRef.current = p.roomCode;
+          for (const r of conn!.db.room.iter()) {
+            if (r.roomCode === p.roomCode) { setRoom(r); setRoomCode(r.roomCode); break; }
+          }
+        });
         conn.db.player.onDelete((_ctx: EventContext, p: any) => removePlayer(p.identity.toHexString()));
 
         // Projectile table
@@ -85,6 +100,7 @@ export default function App() {
             }
             for (const room of conn!.db.room.iter()) {
               if (room.roomCode === myRoomCode) {
+                myRoomCodeRef.current = room.roomCode;
                 setRoom(room);
                 setRoomCode(room.roomCode);
                 if (room.status === "waiting") setScreen("lobby");
@@ -94,7 +110,12 @@ export default function App() {
           })
           .subscribe(["SELECT * FROM room", "SELECT * FROM player", "SELECT * FROM projectile"]);
       })
-      .onDisconnect((_ctx: ErrorContext) => {
+      .onDisconnect((ctx: ErrorContext) => {
+        // Stale token from a different server (e.g. maincloud → local) causes 401.
+        // Drop it so the next connection gets a fresh identity.
+        if ((ctx as any)?.message?.includes('401') || (ctx as any)?.code === 401) {
+          localStorage.removeItem('stdb_token');
+        }
         conn = null;
         setConnected(false);
       })
@@ -220,9 +241,7 @@ export default function App() {
     console.log("[lobby] room.adminIdentity:", room?.adminIdentity?.toHexString());
     console.log("[lobby] players in store:", [...players.keys()]);
     console.log("[lobby] localStorage token:", localStorage.getItem('stdb_token')?.slice(0, 20));
-    const isAdmin = myPlayer?.isAdmin
-      || room?.adminIdentity?.toHexString() === identityRef.current?.toHexString()
-      || false;
+    const isAdmin = myPlayer?.isAdmin ?? false;
     return (
       <LobbyScreen
         isAdmin={isAdmin}
