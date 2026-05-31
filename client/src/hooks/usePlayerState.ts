@@ -12,8 +12,21 @@ export const playerState = {
 // Avoid importing Three at module level — use type only
 import type * as THREE from "three";
 
+const OPPOSITE: Record<string, string> = {
+  left: "right", right: "left",
+  forward: "backward", backward: "forward",
+};
+const MAX_QUEUE = 2;
+
 export function queueMove(dir: "forward" | "backward" | "left" | "right"): { tile: number; row: number } | null {
   if (playerState.blocked) return null;
+
+  const qLen = playerState.movesQueue.length;
+  if (qLen >= MAX_QUEUE) {
+    // Allow 1 extra slot only if it's an opposite direction to the last queued move
+    const lastDir = playerState.movesQueue[qLen - 1];
+    if (qLen >= MAX_QUEUE + 1 || OPPOSITE[lastDir] !== dir) return null;
+  }
 
   const finalRow =
     dir === "forward"

@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import { playerState, stepCompleted } from "./usePlayerState";
 import { tileSize } from "../constants";
@@ -7,13 +8,14 @@ export default function usePlayerAnimation(
   ref: React.RefObject<THREE.Group>,
   onCrossedCarRoad?: (from: number, to: number) => void
 ) {
-  const moveClock = new THREE.Clock(false);
+  const moveClockRef = useRef(new THREE.Clock(false));
 
   useFrame(() => {
     if (!ref.current) return;
     if (!playerState.movesQueue.length) return;
 
     const player = ref.current;
+    const moveClock = moveClockRef.current;
     if (!moveClock.running) moveClock.start();
 
     const stepTime = 0.18;

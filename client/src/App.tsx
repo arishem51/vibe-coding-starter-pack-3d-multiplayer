@@ -75,7 +75,21 @@ export default function App() {
           if (newRoom.roomCode !== myRoomCodeRef.current) return;
           setRoom(newRoom);
           if (newRoom.status === "ended") setScreen("winner");
-          else if (newRoom.status === "playing") setScreen("game");
+          else if (newRoom.status === "playing") {
+            // Init playerState from server-assigned spawn position before screen mounts
+            const myHex = identityRef.current?.toHexString();
+            if (myHex && conn) {
+              for (const p of conn.db.player.iter()) {
+                if (p.identity.toHexString() === myHex) {
+                  playerState.currentTile = Math.round(p.posX);
+                  playerState.currentRow = Math.round(p.posZ);
+                  playerState.movesQueue = [];
+                  break;
+                }
+              }
+            }
+            setScreen("game");
+          }
         });
 
         // Player table
