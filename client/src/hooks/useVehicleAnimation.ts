@@ -2,21 +2,28 @@ import { useFrame } from "@react-three/fiber";
 import { tileSize, minTileIndex, maxTileIndex } from "../constants";
 import * as THREE from "three";
 
+const begin = (minTileIndex - 3) * tileSize;
+const end = (maxTileIndex + 3) * tileSize;
+const range = end - begin;
+
 export default function useVehicleAnimation(
   ref: React.RefObject<THREE.Group>,
   direction: 1 | -1,
-  speed: number
+  speed: number,
+  initialX: number,
+  startedAtMs: number
 ) {
-  useFrame((_state, delta) => {
+  useFrame(() => {
     if (!ref.current) return;
-    const v = ref.current;
-    const begin = (minTileIndex - 3) * tileSize;
-    const end = (maxTileIndex + 3) * tileSize;
+    const elapsed = (Date.now() - startedAtMs) / 1000;
+    const traveled = (speed * elapsed) % range;
 
+    let pos: number;
     if (direction === 1) {
-      v.position.x = v.position.x > end ? begin : v.position.x + speed * delta;
+      pos = begin + ((initialX - begin + traveled) % range);
     } else {
-      v.position.x = v.position.x < begin ? end : v.position.x - speed * delta;
+      pos = end - ((end - initialX + traveled) % range);
     }
+    ref.current.position.x = pos;
   });
 }

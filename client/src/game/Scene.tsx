@@ -22,6 +22,8 @@ export function Scene({
   onPositionUpdate,
 }: Props) {
   const players = useGameStore((s) => s.players);
+  const room = useGameStore((s) => s.room);
+  const startedAtMs = room?.startedAt ? Number(room.startedAt / 1000n) : Date.now();
   const remotePlayers = [...players.values()].filter(
     (p) => p.identity.toHexString() !== myIdentityHex
   );
@@ -35,7 +37,7 @@ export function Scene({
       <ambientLight intensity={0.8} />
       <directionalLight position={[-100, -100, 200]} intensity={1} />
 
-      <Map onCarHit={onCarHit} shieldActive={shieldActive} />
+      <Map onCarHit={onCarHit} shieldActive={shieldActive} startedAtMs={startedAtMs} />
 
       <LocalPlayer
         characterType={characterType}

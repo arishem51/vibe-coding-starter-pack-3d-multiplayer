@@ -4,6 +4,7 @@ export interface Room {
   roomCode: string;
   adminIdentity: { toHexString(): string };
   status: string; // "waiting" | "playing" | "ended"
+  startedAt: bigint; // micros since unix epoch; 0n = not started
 }
 
 export interface PlayerData {

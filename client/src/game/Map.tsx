@@ -6,6 +6,7 @@ import { getRowType, getCarDirection, getCarSpeed, getCarSpacing, NUM_ROWS, minT
 interface Props {
   onCarHit: () => void;
   shieldActive: boolean;
+  startedAtMs: number;
 }
 
 // Pre-generate car layouts per road row (stable across renders)
@@ -21,7 +22,7 @@ const rowLayouts = Array.from({ length: NUM_ROWS }, (_, i) => {
   return { dir, cars };
 });
 
-export function Map({ onCarHit, shieldActive }: Props) {
+export function Map({ onCarHit, shieldActive, startedAtMs }: Props) {
   return (
     <>
       <Grass rowIndex={0} />
@@ -48,6 +49,7 @@ export function Map({ onCarHit, shieldActive }: Props) {
                 color={car.color}
                 onHit={onCarHit}
                 shieldActive={shieldActive}
+                startedAtMs={startedAtMs}
               />
             ))}
           </Road>

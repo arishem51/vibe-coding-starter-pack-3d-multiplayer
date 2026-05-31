@@ -12,17 +12,19 @@ interface Props {
   color: number;
   onHit: () => void;
   shieldActive: boolean;
+  startedAtMs: number;
 }
 
-export function Vehicle({ rowIndex, initialTileIndex, direction, speed, color, onHit, shieldActive }: Props) {
+export function Vehicle({ rowIndex, initialTileIndex, direction, speed, color, onHit, shieldActive, startedAtMs }: Props) {
   const ref = useRef<THREE.Group>(null!);
-  useVehicleAnimation(ref, direction, speed);
+  const initialX = initialTileIndex * tileSize;
+  useVehicleAnimation(ref, direction, speed, initialX, startedAtMs);
   useHitDetection(ref, rowIndex, onHit, shieldActive);
 
   return (
     <group
       ref={ref}
-      position-x={initialTileIndex * tileSize}
+      position-x={initialX}
       rotation-z={direction === 1 ? 0 : Math.PI}
     >
       {/* Car body */}

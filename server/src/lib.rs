@@ -12,6 +12,7 @@ pub struct Room {
     pub room_code: String,
     pub admin_identity: Identity,
     pub status: String, // "waiting" | "playing" | "ended"
+    pub started_at: u64, // micros since unix epoch; 0 = not started
 }
 
 #[spacetimedb::table(accessor = player, public)]
@@ -164,6 +165,7 @@ pub fn create_room(ctx: &ReducerContext, display_name: String) -> Result<(), Str
         room_code: String::new(),
         admin_identity: ctx.sender(),
         status: "waiting".to_string(),
+        started_at: 0,
     });
 
     let mut room = room;
@@ -288,6 +290,7 @@ pub fn start_game(ctx: &ReducerContext, room_code: String) -> Result<(), String>
     }
 
     room.status = "playing".to_string();
+    room.started_at = ts_micros(ctx.timestamp);
     ctx.db.room().room_id().update(room);
     Ok(())
 }
