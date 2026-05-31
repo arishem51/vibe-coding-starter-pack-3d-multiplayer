@@ -1,258 +1,565 @@
-/**
- * Vibe Coding Starter Pack: 3D Multiplayer - lib.rs
- * 
- * Main entry point for the SpacetimeDB module. This file contains:
- * 
- * 1. Database Schema:
- *    - PlayerData: Active player information
- *    - LoggedOutPlayerData: Persistent data for disconnected players
- *    - GameTickSchedule: Periodic update scheduling
- * 
- * 2. Reducer Functions (Server Endpoints):
- *    - init: Module initialization and game tick scheduling
- *    - identity_connected/disconnected: Connection lifecycle management
- *    - register_player: Player registration with username and character class
- *    - update_player_input: Processes player movement and state updates
- *    - game_tick: Periodic update for game state (scheduled)
- * 
- * 3. Table Structure:
- *    - All tables use Identity as primary keys where appropriate
- *    - Connection between tables maintained through identity references
- * 
- * When modifying:
- *    - Table changes require regenerating TypeScript bindings
- *    - Add `public` tag to tables that need client access
- *    - New reducers should follow naming convention and error handling patterns
- *    - Game logic should be placed in separate modules (like player_logic.rs)
- *    - Extend game_tick for gameplay systems that need periodic updates
- * 
- * Related files:
- *    - common.rs: Shared data structures used in table definitions
- *    - player_logic.rs: Player movement and state update calculations
- */
-
-// Declare modules
-mod common;
-mod player_logic;
-
 use spacetimedb::{ReducerContext, Identity, Table, Timestamp, ScheduleAt};
-use std::time::Duration; // Import standard Duration
+use std::time::Duration;
 
-// Use items from common module (structs are needed for table definitions)
-use crate::common::{Vector3, InputState};
+// ==================== TABLES ====================
 
-// --- Schema Definitions ---
+#[spacetimedb::table(accessor = room, public)]
+#[derive(Clone)]
+pub struct Room {
+    #[primary_key]
+    #[auto_inc]
+    pub room_id: u64,
+    pub room_code: String,
+    pub admin_identity: Identity,
+    pub status: String, // "waiting" | "playing" | "ended"
+}
 
 #[spacetimedb::table(accessor = player, public)]
 #[derive(Clone)]
 pub struct PlayerData {
     #[primary_key]
-    identity: Identity,
-    username: String,
-    character_class: String,
-    position: Vector3,
-    rotation: Vector3,
-    health: i32,
-    max_health: i32,
-    mana: i32,
-    max_mana: i32,
-    current_animation: String,
-    is_moving: bool,
-    is_running: bool,
-    is_attacking: bool,
-    is_casting: bool,
-    last_input_seq: u32,
-    input: InputState,
-    color: String,
+    pub identity: Identity,
+    pub room_code: String,
+    pub display_name: String,
+    pub pos_x: f32,
+    pub pos_z: f32,
+    pub lives: u8,
+    pub status: String, // "waiting" | "alive" | "in_quiz" | "eliminated"
+    pub is_admin: bool,
+    pub character_type: String, // "white" | "black" | "ghost"
+    pub ammo: u8,
+    pub shield_active: bool,
+    pub shield_cooldown: bool,
+    pub score: u32,
+    pub bonus_question_pending: bool,
+    pub shield_extended: bool,
+    pub bonus_cooldown_until: u64, // micros since unix epoch; 0 = ready
 }
 
-#[spacetimedb::table(accessor = logged_out_player)]
+#[spacetimedb::table(accessor = projectile, public)]
 #[derive(Clone)]
-pub struct LoggedOutPlayerData {
-    #[primary_key]
-    identity: Identity,
-    username: String,
-    character_class: String,
-    position: Vector3,
-    rotation: Vector3,
-    health: i32,
-    max_health: i32,
-    mana: i32,
-    max_mana: i32,
-    last_seen: Timestamp,
-}
-
-#[spacetimedb::table(accessor = game_tick_schedule, public, scheduled(game_tick))]
-pub struct GameTickSchedule {
+pub struct Projectile {
     #[primary_key]
     #[auto_inc]
-    scheduled_id: u64,
-    scheduled_at: ScheduleAt,
+    pub projectile_id: u64,
+    pub owner_identity: Identity,
+    pub room_code: String,
+    pub pos_x: f32,
+    pub pos_z: f32,
+    pub direction: i32, // +1 forward, -1 backward
+    pub range_remaining: i32,
 }
 
-// --- Lifecycle Reducers ---
+#[spacetimedb::table(accessor = ammo_tick_schedule, scheduled(ammo_tick))]
+pub struct AmmoTickSchedule {
+    #[primary_key]
+    #[auto_inc]
+    pub scheduled_id: u64,
+    pub scheduled_at: ScheduleAt,
+}
+
+#[spacetimedb::table(accessor = projectile_tick_schedule, scheduled(move_projectiles))]
+pub struct ProjectileTickSchedule {
+    #[primary_key]
+    #[auto_inc]
+    pub scheduled_id: u64,
+    pub scheduled_at: ScheduleAt,
+}
+
+#[spacetimedb::table(accessor = shield_expire_schedule, scheduled(shield_expire))]
+pub struct ShieldExpireSchedule {
+    #[primary_key]
+    #[auto_inc]
+    pub scheduled_id: u64,
+    pub scheduled_at: ScheduleAt,
+    pub player_identity: Identity,
+}
+
+#[spacetimedb::table(accessor = shield_cooldown_schedule, scheduled(shield_cooldown_expire))]
+pub struct ShieldCooldownSchedule {
+    #[primary_key]
+    #[auto_inc]
+    pub scheduled_id: u64,
+    pub scheduled_at: ScheduleAt,
+    pub player_identity: Identity,
+}
+
+// ==================== HELPERS ====================
+
+fn ts_micros(ts: Timestamp) -> u64 {
+    ts.to_micros_since_unix_epoch().max(0) as u64
+}
+
+fn id_to_room_code(id: u64) -> String {
+    const CHARSET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let base = CHARSET.len() as u64;
+    let mut n = id.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+    let mut code = [0u8; 5];
+    for byte in code.iter_mut() {
+        *byte = CHARSET[(n % base) as usize];
+        n /= base;
+    }
+    String::from_utf8(code.to_vec()).unwrap()
+}
+
+fn check_win_condition(ctx: &ReducerContext, room_code: &str) {
+    let alive: Vec<PlayerData> = ctx.db.player().iter()
+        .filter(|p| p.room_code == room_code && (p.status == "alive" || p.status == "in_quiz") && !p.is_admin)
+        .collect();
+
+    if alive.len() <= 1 {
+        if let Some(mut room) = ctx.db.room().iter().find(|r| r.room_code == room_code) {
+            if room.status == "playing" {
+                room.status = "ended".to_string();
+                ctx.db.room().room_id().update(room);
+            }
+        }
+    }
+}
+
+// ==================== LIFECYCLE ====================
 
 #[spacetimedb::reducer(init)]
 pub fn init(ctx: &ReducerContext) -> Result<(), String> {
-    spacetimedb::log::info!("[INIT] Initializing Vibe Multiplayer module...");
-    if ctx.db.game_tick_schedule().count() == 0 {
-        spacetimedb::log::info!("[INIT] Scheduling initial game tick (every 1 second)...");
-        let loop_duration = Duration::from_secs(1);
-        let schedule = GameTickSchedule {
-            scheduled_id: 0,
-            scheduled_at: ScheduleAt::Interval(loop_duration.into()),
-        };
-        match ctx.db.game_tick_schedule().try_insert(schedule) {
-            Ok(row) => spacetimedb::log::info!("[INIT] Game tick schedule inserted successfully. ID: {}", row.scheduled_id),
-            Err(e) => spacetimedb::log::error!("[INIT] FAILED to insert game tick schedule: {}", e),
-        }
-    } else {
-        spacetimedb::log::info!("[INIT] Game tick already scheduled.");
-    }
+    ctx.db.ammo_tick_schedule().insert(AmmoTickSchedule {
+        scheduled_id: 0,
+        scheduled_at: ScheduleAt::Interval(Duration::from_secs(5).into()),
+    });
+    ctx.db.projectile_tick_schedule().insert(ProjectileTickSchedule {
+        scheduled_id: 0,
+        scheduled_at: ScheduleAt::Interval(Duration::from_millis(300).into()),
+    });
     Ok(())
 }
 
 #[spacetimedb::reducer(client_connected)]
-pub fn identity_connected(ctx: &ReducerContext) {
-    spacetimedb::log::info!("Client connected: {}", ctx.sender());
-    // Player registration/re-joining happens in register_player reducer called by client
-}
+pub fn identity_connected(_ctx: &ReducerContext) {}
 
 #[spacetimedb::reducer(client_disconnected)]
 pub fn identity_disconnected(ctx: &ReducerContext) {
-    let player_identity: Identity = ctx.sender();
-    spacetimedb::log::info!("Client disconnected: {}", player_identity);
-    let logout_time: Timestamp = ctx.timestamp;
-
-    if let Some(player) = ctx.db.player().identity().find(player_identity) {
-        spacetimedb::log::info!("Moving player {} to logged_out_player table.", player_identity);
-        let logged_out_player = LoggedOutPlayerData {
-            identity: player.identity,
-            username: player.username.clone(),
-            character_class: player.character_class.clone(),
-            position: player.position.clone(),
-            rotation: player.rotation.clone(),
-            health: player.health,
-            max_health: player.max_health,
-            mana: player.mana,
-            max_mana: player.max_mana,
-            last_seen: logout_time,
-        };
-        ctx.db.logged_out_player().insert(logged_out_player);
-        ctx.db.player().identity().delete(player_identity);
-    } else {
-        spacetimedb::log::warn!("Disconnect by player {} not found in active player table.", player_identity);
-        if let Some(mut logged_out_player) = ctx.db.logged_out_player().identity().find(player_identity) {
-            logged_out_player.last_seen = logout_time;
-            ctx.db.logged_out_player().identity().update(logged_out_player);
-            spacetimedb::log::warn!("Updated last_seen for already logged out player {}.", player_identity);
+    if let Some(player) = ctx.db.player().identity().find(ctx.sender()) {
+        let in_waiting = ctx.db.room().iter()
+            .any(|r| r.room_code == player.room_code && r.status == "waiting");
+        // Keep the player record while the room is still in waiting — they can reconnect
+        if !in_waiting {
+            ctx.db.player().identity().delete(ctx.sender());
         }
     }
 }
 
-// --- Game Specific Reducers ---
+// ==================== ROOM ====================
 
 #[spacetimedb::reducer]
-pub fn register_player(ctx: &ReducerContext, username: String, character_class: String) {
-    let player_identity: Identity = ctx.sender();
-    spacetimedb::log::info!(
-        "Registering player {} ({}) with class {}",
-        username,
-        player_identity,
-        character_class
-    );
+pub fn create_room(ctx: &ReducerContext, display_name: String) -> Result<(), String> {
+    // Clean up any existing player entry
+    ctx.db.player().identity().delete(ctx.sender());
 
-    if ctx.db.player().identity().find(player_identity).is_some() {
-        spacetimedb::log::warn!("Player {} is already active.", player_identity);
-        return;
-    }
+    let room = ctx.db.room().insert(Room {
+        room_id: 0,
+        room_code: String::new(),
+        admin_identity: ctx.sender(),
+        status: "waiting".to_string(),
+    });
 
-    // Assign color and position based on current player count
-    let player_count = ctx.db.player().iter().count();
-    let colors = ["cyan", "magenta", "yellow", "lightgreen", "white", "orange"];
-    let assigned_color = colors[player_count % colors.len()].to_string();
-    // Simple horizontal offset for spawning, start Y at 1.0
-    let spawn_position = Vector3 { x: (player_count as f32 * 5.0) - 2.5, y: 1.0, z: 0.0 };
+    let mut room = room;
+    let code = id_to_room_code(room.room_id);
+    room.room_code = code.clone();
+    ctx.db.room().room_id().update(room);
 
-    if let Some(logged_out_player) = ctx.db.logged_out_player().identity().find(player_identity) {
-        spacetimedb::log::info!("Player {} is rejoining.", player_identity);
-        let default_input = InputState {
-            forward: false, backward: false, left: false, right: false,
-            sprint: false, jump: false, attack: false, cast_spell: false,
-            sequence: 0
-        };
-        let rejoining_player = PlayerData {
-            identity: logged_out_player.identity,
-            username: logged_out_player.username.clone(),
-            character_class: logged_out_player.character_class.clone(),
-            position: spawn_position,
-            rotation: logged_out_player.rotation.clone(),
-            health: logged_out_player.health,
-            max_health: logged_out_player.max_health,
-            mana: logged_out_player.mana,
-            max_mana: logged_out_player.max_mana,
-            current_animation: "idle".to_string(),
-            is_moving: false,
-            is_running: false,
-            is_attacking: false,
-            is_casting: false,
-            last_input_seq: 0,
-            input: default_input,
-            color: assigned_color,
-        };
-        ctx.db.player().insert(rejoining_player);
-        ctx.db.logged_out_player().identity().delete(player_identity);
-    } else {
-        spacetimedb::log::info!("Registering new player {}.", player_identity);
-        let default_input = InputState {
-            forward: false, backward: false, left: false, right: false,
-            sprint: false, jump: false, attack: false, cast_spell: false,
-            sequence: 0
-        };
-        ctx.db.player().insert(PlayerData {
-            identity: player_identity,
-            username,
-            character_class,
-            position: spawn_position,
-            rotation: Vector3 { x: 0.0, y: 0.0, z: 0.0 },
-            health: 100,
-            max_health: 100,
-            mana: 100,
-            max_mana: 100,
-            current_animation: "idle".to_string(),
-            is_moving: false,
-            is_running: false,
-            is_attacking: false,
-            is_casting: false,
-            last_input_seq: 0,
-            input: default_input,
-            color: assigned_color,
-        });
-    }
+    ctx.db.player().insert(PlayerData {
+        identity: ctx.sender(),
+        room_code: code,
+        display_name,
+        pos_x: 0.0,
+        pos_z: 0.0,
+        lives: 3,
+        status: "waiting".to_string(),
+        is_admin: true,
+        character_type: "ghost".to_string(),
+        ammo: 0,
+        shield_active: false,
+        shield_cooldown: false,
+        score: 0,
+        bonus_question_pending: false,
+        shield_extended: false,
+        bonus_cooldown_until: 0,
+    });
+
+    Ok(())
 }
 
 #[spacetimedb::reducer]
-pub fn update_player_input(
-    ctx: &ReducerContext,
-    input: InputState,
-    _client_pos: Vector3,
-    client_rot: Vector3,
-    client_animation: String,
-) {
-    if let Some(mut player) = ctx.db.player().identity().find(ctx.sender()) {
-        player_logic::update_input_state(&mut player, input, client_rot, client_animation);
-        ctx.db.player().identity().update(player);
+pub fn join_room(ctx: &ReducerContext, room_code: String, player_name: String) -> Result<(), String> {
+    let room = ctx.db.room().iter()
+        .find(|r| r.room_code == room_code)
+        .ok_or_else(|| "Room not found".to_string())?;
+
+    if room.status != "waiting" {
+        return Err("Room is not accepting players".to_string());
+    }
+
+    let is_admin = ctx.sender() == room.admin_identity;
+
+    ctx.db.player().identity().delete(ctx.sender());
+
+    ctx.db.player().insert(PlayerData {
+        identity: ctx.sender(),
+        room_code,
+        display_name: player_name,
+        pos_x: 0.0,
+        pos_z: 0.0,
+        lives: 3,
+        status: "waiting".to_string(),
+        is_admin,
+        character_type: if is_admin { "ghost" } else { "white" }.to_string(),
+        ammo: 0,
+        shield_active: false,
+        shield_cooldown: false,
+        score: 0,
+        bonus_question_pending: false,
+        shield_extended: false,
+        bonus_cooldown_until: 0,
+    });
+
+    Ok(())
+}
+
+#[spacetimedb::reducer]
+pub fn select_character(ctx: &ReducerContext, character_type: String) -> Result<(), String> {
+    if character_type != "white" && character_type != "black" {
+        return Err("Invalid character type".to_string());
+    }
+
+    let mut player = ctx.db.player().identity().find(ctx.sender())
+        .ok_or_else(|| "Player not found".to_string())?;
+
+    if player.is_admin {
+        return Err("Admin is always ghost".to_string());
+    }
+
+    let room = ctx.db.room().iter()
+        .find(|r| r.room_code == player.room_code)
+        .ok_or_else(|| "Room not found".to_string())?;
+
+    if room.status != "waiting" {
+        return Err("Game already started".to_string());
+    }
+
+    player.character_type = character_type;
+    ctx.db.player().identity().update(player);
+    Ok(())
+}
+
+#[spacetimedb::reducer]
+pub fn start_game(ctx: &ReducerContext, room_code: String) -> Result<(), String> {
+    let admin = ctx.db.player().identity().find(ctx.sender())
+        .ok_or_else(|| "Player not found".to_string())?;
+
+    if !admin.is_admin || admin.room_code != room_code {
+        return Err("Only admin can start".to_string());
+    }
+
+    let mut room = ctx.db.room().iter()
+        .find(|r| r.room_code == room_code)
+        .ok_or_else(|| "Room not found".to_string())?;
+
+    if room.status != "waiting" {
+        return Err("Room already started".to_string());
+    }
+
+    let players: Vec<PlayerData> = ctx.db.player().iter()
+        .filter(|p| p.room_code == room_code)
+        .collect();
+
+    let n = players.len() as f32;
+    for (i, mut p) in players.into_iter().enumerate() {
+        p.pos_x = (i as f32 - n / 2.0) * 2.0;
+        p.pos_z = 0.0;
+        p.status = "alive".to_string();
+        p.lives = 3;
+        p.ammo = 0;
+        p.score = 0;
+        ctx.db.player().identity().update(p);
+    }
+
+    room.status = "playing".to_string();
+    ctx.db.room().room_id().update(room);
+    Ok(())
+}
+
+#[spacetimedb::reducer]
+pub fn force_end(ctx: &ReducerContext, room_code: String) -> Result<(), String> {
+    let admin = ctx.db.player().identity().find(ctx.sender())
+        .ok_or_else(|| "Player not found".to_string())?;
+
+    if !admin.is_admin || admin.room_code != room_code {
+        return Err("Only admin can force end".to_string());
+    }
+
+    let mut room = ctx.db.room().iter()
+        .find(|r| r.room_code == room_code)
+        .ok_or_else(|| "Room not found".to_string())?;
+
+    room.status = "ended".to_string();
+    ctx.db.room().room_id().update(room);
+    Ok(())
+}
+
+// ==================== MOVEMENT ====================
+
+#[spacetimedb::reducer]
+pub fn update_position(ctx: &ReducerContext, x: f32, z: f32) -> Result<(), String> {
+    let mut player = ctx.db.player().identity().find(ctx.sender())
+        .ok_or_else(|| "Player not found".to_string())?;
+
+    if player.status == "in_quiz" || player.status == "eliminated" || player.status == "waiting" {
+        return Ok(());
+    }
+    if player.shield_active {
+        return Ok(());
+    }
+
+    // Anti-teleport: max 2 tiles per update
+    if (x - player.pos_x).abs() > 2.0 || (z - player.pos_z).abs() > 2.0 {
+        return Ok(());
+    }
+
+    player.pos_x = x;
+    player.pos_z = z;
+    ctx.db.player().identity().update(player);
+    Ok(())
+}
+
+// ==================== QUIZ (CAR HIT) ====================
+
+#[spacetimedb::reducer]
+pub fn trigger_quiz(ctx: &ReducerContext) -> Result<(), String> {
+    let mut player = ctx.db.player().identity().find(ctx.sender())
+        .ok_or_else(|| "Player not found".to_string())?;
+
+    if player.character_type == "ghost" || player.shield_active || player.status != "alive" {
+        return Ok(());
+    }
+
+    player.status = "in_quiz".to_string();
+    ctx.db.player().identity().update(player);
+    Ok(())
+}
+
+#[spacetimedb::reducer]
+pub fn submit_answer(ctx: &ReducerContext, is_correct: bool) -> Result<(), String> {
+    let mut player = ctx.db.player().identity().find(ctx.sender())
+        .ok_or_else(|| "Player not found".to_string())?;
+
+    if player.status != "in_quiz" {
+        return Ok(());
+    }
+
+    if is_correct {
+        player.status = "alive".to_string();
     } else {
-        spacetimedb::log::warn!("Player {} tried to update input but is not active.", ctx.sender());
+        player.pos_z = (player.pos_z - 1.0).max(0.0);
+        player.lives = player.lives.saturating_sub(1);
+        player.status = if player.lives == 0 { "eliminated".to_string() } else { "alive".to_string() };
+    }
+
+    let room_code = player.room_code.clone();
+    ctx.db.player().identity().update(player);
+    check_win_condition(ctx, &room_code);
+    Ok(())
+}
+
+// ==================== KNOWLEDGE TRIGGER ====================
+
+#[spacetimedb::reducer]
+pub fn crossed_car_road(ctx: &ReducerContext) -> Result<(), String> {
+    let mut player = ctx.db.player().identity().find(ctx.sender())
+        .ok_or_else(|| "Player not found".to_string())?;
+
+    if player.status != "alive" {
+        return Ok(());
+    }
+
+    player.score += 1;
+
+    let now_micros = ts_micros(ctx.timestamp);
+    let on_cooldown = player.bonus_cooldown_until > 0 && now_micros < player.bonus_cooldown_until;
+
+    if !on_cooldown && !player.bonus_question_pending {
+        // Pseudo-random 15% check
+        let seed = (player.score as u64)
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add((player.pos_z.to_bits() as u64).wrapping_mul(2246822519));
+        if seed % 100 < 15 {
+            player.bonus_question_pending = true;
+        }
+    }
+
+    ctx.db.player().identity().update(player);
+    Ok(())
+}
+
+#[spacetimedb::reducer]
+pub fn submit_bonus_answer(ctx: &ReducerContext, is_correct: bool) -> Result<(), String> {
+    let mut player = ctx.db.player().identity().find(ctx.sender())
+        .ok_or_else(|| "Player not found".to_string())?;
+
+    player.bonus_question_pending = false;
+    player.bonus_cooldown_until = ts_micros(ctx.timestamp) + 10_000_000; // 10s
+
+    if is_correct {
+        player.score += 10;
+        match player.character_type.as_str() {
+            "black" => { player.shield_extended = true; }
+            "white" => { player.ammo += 2; }
+            _ => {}
+        }
+    }
+
+    ctx.db.player().identity().update(player);
+    Ok(())
+}
+
+// ==================== CHARACTER SKILLS ====================
+
+#[spacetimedb::reducer]
+pub fn shoot(ctx: &ReducerContext, direction: i32) -> Result<(), String> {
+    let mut player = ctx.db.player().identity().find(ctx.sender())
+        .ok_or_else(|| "Player not found".to_string())?;
+
+    if player.character_type != "white" { return Err("Only White can shoot".to_string()); }
+    if player.ammo == 0 { return Err("No ammo".to_string()); }
+    if player.status != "alive" { return Ok(()); }
+    if direction != 1 && direction != -1 { return Err("Invalid direction".to_string()); }
+
+    player.ammo -= 1;
+    let (room_code, pos_x, pos_z) = (player.room_code.clone(), player.pos_x, player.pos_z);
+    ctx.db.player().identity().update(player);
+
+    ctx.db.projectile().insert(Projectile {
+        projectile_id: 0,
+        owner_identity: ctx.sender(),
+        room_code,
+        pos_x,
+        pos_z: pos_z + direction as f32,
+        direction,
+        range_remaining: 4,
+    });
+
+    Ok(())
+}
+
+#[spacetimedb::reducer]
+pub fn toggle_shield(ctx: &ReducerContext) -> Result<(), String> {
+    let mut player = ctx.db.player().identity().find(ctx.sender())
+        .ok_or_else(|| "Player not found".to_string())?;
+
+    if player.character_type != "black" { return Err("Only Black can use shield".to_string()); }
+    if player.shield_active { return Err("Shield already active".to_string()); }
+    if player.shield_cooldown { return Err("Shield on cooldown".to_string()); }
+    if player.status != "alive" { return Ok(()); }
+
+    let is_extended = player.shield_extended;
+    player.shield_active = true;
+    player.shield_extended = false;
+    ctx.db.player().identity().update(player);
+
+    let shield_secs: u64 = if is_extended { 6 } else { 3 };
+    ctx.db.shield_expire_schedule().insert(ShieldExpireSchedule {
+        scheduled_id: 0,
+        scheduled_at: ScheduleAt::Time(
+            (ctx.timestamp + Duration::from_secs(shield_secs)).into()
+        ),
+        player_identity: ctx.sender(),
+    });
+
+    Ok(())
+}
+
+// ==================== SCHEDULED REDUCERS ====================
+
+#[spacetimedb::reducer(update)]
+pub fn ammo_tick(ctx: &ReducerContext, _sched: AmmoTickSchedule) {
+    for mut player in ctx.db.player().iter() {
+        if player.character_type == "white" && player.status == "alive" && player.ammo < 5 {
+            player.ammo += 1;
+            ctx.db.player().identity().update(player);
+        }
     }
 }
 
 #[spacetimedb::reducer(update)]
-pub fn game_tick(ctx: &ReducerContext, _tick_info: GameTickSchedule) {
-    // Just use a simple log message without timestamp conversion
-    let delta_time = 1.0; // Fixed 1-second tick for simplicity
-    
-    player_logic::update_players_logic(ctx, delta_time);
-    
-    spacetimedb::log::debug!("Game tick completed");
+pub fn move_projectiles(ctx: &ReducerContext, _sched: ProjectileTickSchedule) {
+    let projectiles: Vec<Projectile> = ctx.db.projectile().iter().collect();
+
+    for mut proj in projectiles {
+        proj.pos_z += proj.direction as f32;
+        proj.range_remaining -= 1;
+
+        if proj.range_remaining <= 0 {
+            ctx.db.projectile().projectile_id().delete(proj.projectile_id);
+            continue;
+        }
+
+        let mut hit = false;
+        let mut reflected = false;
+        let players: Vec<PlayerData> = ctx.db.player().iter()
+            .filter(|p| p.room_code == proj.room_code)
+            .collect();
+
+        for mut target in players {
+            if target.identity == proj.owner_identity { continue; }
+            if target.character_type == "ghost" { continue; }
+
+            let dx = (target.pos_x - proj.pos_x).abs();
+            let dz = (target.pos_z - proj.pos_z).abs();
+
+            if dx < 0.6 && dz < 0.6 {
+                if target.shield_active && target.character_type == "black" {
+                    proj.direction = -proj.direction;
+                    reflected = true;
+                } else if target.status == "alive" || target.status == "in_quiz" {
+                    target.pos_z += proj.direction as f32;
+                    ctx.db.player().identity().update(target);
+                    hit = true;
+                }
+                break;
+            }
+        }
+
+        if hit {
+            ctx.db.projectile().projectile_id().delete(proj.projectile_id);
+        } else {
+            if reflected {
+                // Also bounce back 1 tile
+                proj.pos_z += proj.direction as f32;
+            }
+            ctx.db.projectile().projectile_id().update(proj);
+        }
+    }
+}
+
+#[spacetimedb::reducer(update)]
+pub fn shield_expire(ctx: &ReducerContext, sched: ShieldExpireSchedule) {
+    if let Some(mut player) = ctx.db.player().identity().find(sched.player_identity) {
+        player.shield_active = false;
+        player.shield_cooldown = true;
+        ctx.db.player().identity().update(player);
+
+        ctx.db.shield_cooldown_schedule().insert(ShieldCooldownSchedule {
+            scheduled_id: 0,
+            scheduled_at: ScheduleAt::Time(
+                (ctx.timestamp + Duration::from_secs(9)).into()
+            ),
+            player_identity: sched.player_identity,
+        });
+    }
+}
+
+#[spacetimedb::reducer(update)]
+pub fn shield_cooldown_expire(_ctx: &ReducerContext, sched: ShieldCooldownSchedule) {
+    if let Some(mut player) = _ctx.db.player().identity().find(sched.player_identity) {
+        player.shield_cooldown = false;
+        _ctx.db.player().identity().update(player);
+    }
 }

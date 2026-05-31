@@ -17,8 +17,8 @@ import type { ErrorContext } from './generated/index.js';
 import type { InputState, Vector3 } from './generated/types.js';
 
 // --- Configuration ---
-const DB_HOST = 'localhost:3000';
-const DB_NAME = 'vibe-multiplayer';
+const DB_HOST = 'maincloud.spacetimedb.com';
+const DB_NAME = 'vibe-multiplayer-arishem';
 const NUM_CLIENTS = parseInt(process.argv[2] || '10', 10);
 const SIMULATION_DURATION_MS = parseInt(process.argv[3] || '10', 10) * 1000;
 const INPUT_TICK_INTERVAL_MS = 50; // 20Hz
@@ -151,7 +151,7 @@ function spawnClient(clientId: number): Promise<ClientState> {
     };
 
     DbConnection.builder()
-      .withUri(`ws://${DB_HOST}`)
+      .withUri(`wss://${DB_HOST}`)
       .withDatabaseName(DB_NAME)
       .withConfirmedReads(false)
       .onConnect(onConnect)
