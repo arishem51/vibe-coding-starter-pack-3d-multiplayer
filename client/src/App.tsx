@@ -15,12 +15,14 @@ import { LobbyScreen } from "./screens/LobbyScreen";
 import { WinnerScreen } from "./screens/WinnerScreen";
 import { Scene } from "./game/Scene";
 import { HUD } from "./hud/HUD";
+import { setConn } from "./connection";
 
 let conn: DbConnection | null = null;
 
 export default function App() {
   const [connected, setConnected] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
+  const [shaking, setShaking] = useState(false);
   const identityRef = useRef<Identity | null>(null);
   const myRoomCodeRef = useRef<string | null>(null);
 
@@ -53,12 +55,15 @@ export default function App() {
       .onConnect((connection: DbConnection, id: Identity, token: string) => {
         localStorage.setItem('stdb_token', token);
         conn = connection;
+        setConn(connection);
         identityRef.current = id;
         setIdentity(id.toHexString());
         setConnected(true);
 
-        // Room table
+        // Room table — ignore backfill inserts (onApplied handles initial state)
+        let initializedRef = false;
         conn.db.room.onInsert((_ctx: EventContext, room: any) => {
+          if (!initializedRef) return;
           if (room.adminIdentity.toHexString() === identityRef.current?.toHexString()) {
             myRoomCodeRef.current = room.roomCode;
             setRoom(room);
@@ -92,6 +97,7 @@ export default function App() {
 
         conn.subscriptionBuilder()
           .onApplied(() => {
+            initializedRef = true;
             const myHex = identityRef.current?.toHexString();
             let myRoomCode: string | null = null;
             for (const p of conn!.db.player.iter()) {
@@ -157,7 +163,9 @@ export default function App() {
     if (myPlayer.characterType === "ghost") return;
     if (myPlayer.shieldActive) return;
     if (myPlayer.status !== "alive") return;
-    conn.reducers.triggerQuiz({});
+    conn.reducers.carHit({});
+    setShaking(true);
+    setTimeout(() => setShaking(false), 400);
   }, [myPlayer]);
 
   const handleCrossedCarRoad = useCallback(() => {
@@ -189,7 +197,7 @@ export default function App() {
   if (screen === "landing") {
     return (
       <LandingScreen
-        onCreateRoom={() => setScreen("create")}
+        onCreateRoom={() => { setRoom(null); setRoomCode(null); myRoomCodeRef.current = null; setScreen("create"); }}
         onJoinRoom={() => setScreen("join")}
       />
     );
@@ -199,7 +207,7 @@ export default function App() {
     return (
       <CreateRoomScreen
         roomCode={roomCode}
-        onBack={() => setScreen("landing")}
+        onBack={() => { setRoom(null); setRoomCode(null); myRoomCodeRef.current = null; setScreen("landing"); }}
         onSubmit={(name) => conn?.reducers.createRoom({ displayName: name })}
         onGoLobby={() => setScreen("lobby")}
       />
@@ -267,7 +275,20 @@ export default function App() {
 
   // ── Game screen ─────────────────────────────────────────────────────────────
   return (
-    <div style={{ width: "100vw", height: "100vh", position: "relative", background: "#000" }}>
+    <div style={{
+      width: "100vw", height: "100vh", position: "relative", background: "#000",
+      animation: shaking ? "screenShake 0.4s ease" : undefined,
+    }}>
+      <style>{`
+        @keyframes screenShake {
+          0%   { transform: translate(0,0) rotate(0deg); }
+          20%  { transform: translate(-6px, 4px) rotate(-1deg); }
+          40%  { transform: translate(6px, -4px) rotate(1deg); }
+          60%  { transform: translate(-4px, 6px) rotate(-0.5deg); }
+          80%  { transform: translate(4px, -2px) rotate(0.5deg); }
+          100% { transform: translate(0,0) rotate(0deg); }
+        }
+      `}</style>
       <Scene
         myIdentityHex={identityRef.current?.toHexString() ?? ""}
         shieldActive={myPlayer?.shieldActive ?? false}
@@ -278,7 +299,6 @@ export default function App() {
       />
       <HUD
         myPlayer={myPlayer}
-        onQuizAnswer={handleQuizAnswer}
         onBonusAnswer={handleBonusAnswer}
       />
       {/* Admin controls */}

@@ -144,11 +144,24 @@ pub fn identity_connected(_ctx: &ReducerContext) {}
 #[spacetimedb::reducer(client_disconnected)]
 pub fn identity_disconnected(ctx: &ReducerContext) {
     if let Some(player) = ctx.db.player().identity().find(ctx.sender()) {
-        let in_waiting = ctx.db.room().iter()
-            .any(|r| r.room_code == player.room_code && r.status == "waiting");
-        // Keep the player record while the room is still in waiting — they can reconnect
-        if !in_waiting {
-            ctx.db.player().identity().delete(ctx.sender());
+        if let Some(mut room) = ctx.db.room().iter()
+            .find(|r| r.room_code == player.room_code)
+        {
+            match room.status.as_str() {
+                "ended" => {
+                    // Game over — clean up
+                    ctx.db.player().identity().delete(ctx.sender());
+                }
+                "waiting" if player.is_admin => {
+                    // Admin left lobby before start — close the room
+                    room.status = "ended".to_string();
+                    ctx.db.room().room_id().update(room);
+                    ctx.db.player().identity().delete(ctx.sender());
+                }
+                _ => {
+                    // Playing or non-admin waiting — keep record so they can reconnect
+                }
+            }
         }
     }
 }
@@ -157,6 +170,14 @@ pub fn identity_disconnected(ctx: &ReducerContext) {
 
 #[spacetimedb::reducer]
 pub fn create_room(ctx: &ReducerContext, display_name: String) -> Result<(), String> {
+    // End any existing room this admin owns
+    let old_rooms: Vec<_> = ctx.db.room().iter()
+        .filter(|r| r.admin_identity == ctx.sender() && r.status != "ended")
+        .collect();
+    for mut r in old_rooms {
+        r.status = "ended".to_string();
+        ctx.db.room().room_id().update(r);
+    }
     // Clean up any existing player entry
     ctx.db.player().identity().delete(ctx.sender());
 
@@ -338,10 +359,10 @@ pub fn update_position(ctx: &ReducerContext, x: f32, z: f32) -> Result<(), Strin
     Ok(())
 }
 
-// ==================== QUIZ (CAR HIT) ====================
+// ==================== CAR HIT ====================
 
 #[spacetimedb::reducer]
-pub fn trigger_quiz(ctx: &ReducerContext) -> Result<(), String> {
+pub fn car_hit(ctx: &ReducerContext) -> Result<(), String> {
     let mut player = ctx.db.player().identity().find(ctx.sender())
         .ok_or_else(|| "Player not found".to_string())?;
 
@@ -349,27 +370,9 @@ pub fn trigger_quiz(ctx: &ReducerContext) -> Result<(), String> {
         return Ok(());
     }
 
-    player.status = "in_quiz".to_string();
-    ctx.db.player().identity().update(player);
-    Ok(())
-}
-
-#[spacetimedb::reducer]
-pub fn submit_answer(ctx: &ReducerContext, is_correct: bool) -> Result<(), String> {
-    let mut player = ctx.db.player().identity().find(ctx.sender())
-        .ok_or_else(|| "Player not found".to_string())?;
-
-    if player.status != "in_quiz" {
-        return Ok(());
-    }
-
-    if is_correct {
-        player.status = "alive".to_string();
-    } else {
-        player.pos_z = (player.pos_z - 1.0).max(0.0);
-        player.lives = player.lives.saturating_sub(1);
-        player.status = if player.lives == 0 { "eliminated".to_string() } else { "alive".to_string() };
-    }
+    player.lives = player.lives.saturating_sub(1);
+    player.pos_z = (player.pos_z - 1.0).max(0.0);
+    player.status = if player.lives == 0 { "eliminated".to_string() } else { "alive".to_string() };
 
     let room_code = player.room_code.clone();
     ctx.db.player().identity().update(player);
@@ -431,6 +434,17 @@ pub fn submit_bonus_answer(ctx: &ReducerContext, is_correct: bool) -> Result<(),
 // ==================== CHARACTER SKILLS ====================
 
 #[spacetimedb::reducer]
+pub fn destroy_projectile(ctx: &ReducerContext, projectile_id: u64) -> Result<(), String> {
+    if let Some(proj) = ctx.db.projectile().projectile_id().find(projectile_id) {
+        // Only owner can destroy, or it may already be gone — both are fine
+        if proj.owner_identity == ctx.sender() {
+            ctx.db.projectile().projectile_id().delete(projectile_id);
+        }
+    }
+    Ok(())
+}
+
+#[spacetimedb::reducer]
 pub fn shoot(ctx: &ReducerContext, direction: i32) -> Result<(), String> {
     let mut player = ctx.db.player().identity().find(ctx.sender())
         .ok_or_else(|| "Player not found".to_string())?;
@@ -451,7 +465,7 @@ pub fn shoot(ctx: &ReducerContext, direction: i32) -> Result<(), String> {
         pos_x,
         pos_z: pos_z + direction as f32,
         direction,
-        range_remaining: 4,
+        range_remaining: 10,
     });
 
     Ok(())

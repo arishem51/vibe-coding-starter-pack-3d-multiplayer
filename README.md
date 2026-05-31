@@ -84,35 +84,39 @@ cd server && spacetime build
 spacetime generate --lang typescript --out-dir ../client/src/generated
 ```
 
-### Running the Game
+### Running the Game (Local)
 
 You need three terminals:
 
 ```bash
-# Terminal 1: Start SpacetimeDB server
+# Terminal 1: Start local SpacetimeDB server
 cd server
 spacetime start
 
-# Terminal 2: Publish the game module
+# Terminal 2: Build and publish the game module to local server
 cd server
-spacetime publish vibe-multiplayer
+spacetime build
+spacetime publish --server local spst-crossy -y
 
 # Terminal 3: Start the client dev server
 cd client
 npm run dev
+# To expose on LAN (for phone/tablet access):
+npm run dev -- --host
 ```
 
-Open http://localhost:5173 in your browser, enter a name, pick a class, and join.
+Open http://localhost:5173 in your browser.
+For LAN devices, open http://<your-local-ip>:5173 — the client auto-detects the server IP.
 
-### Regenerating Bindings
+### Regenerating TypeScript Bindings
 
-When you change server schema or reducers:
+Run this after any change to server tables or reducers:
 
 ```bash
 cd server
 spacetime build
-spacetime generate --lang typescript --out-dir ../client/src/generated
-spacetime publish vibe-multiplayer
+spacetime generate --lang typescript --out-dir ../client/src/generated --bin-path target/wasm32-unknown-unknown/release/spacetime_module.wasm
+spacetime publish --server local spst-crossy -y
 ```
 
 ## Controls

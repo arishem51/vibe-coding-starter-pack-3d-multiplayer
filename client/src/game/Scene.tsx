@@ -2,6 +2,7 @@ import { Canvas } from "@react-three/fiber";
 import { Map } from "./Map";
 import { LocalPlayer } from "./LocalPlayer";
 import { RemotePlayer } from "./RemotePlayer";
+import { ProjectileDot } from "./ProjectileDot";
 import { useGameStore } from "../stores/gameStore";
 
 interface Props {
@@ -22,6 +23,7 @@ export function Scene({
   onPositionUpdate,
 }: Props) {
   const players = useGameStore((s) => s.players);
+  const projectiles = useGameStore((s) => s.projectiles);
   const room = useGameStore((s) => s.room);
   const startedAtMs = room?.startedAt ? Number(room.startedAt / 1000n) : Date.now();
   const remotePlayers = [...players.values()].filter(
@@ -48,6 +50,10 @@ export function Scene({
 
       {remotePlayers.map((p) => (
         <RemotePlayer key={p.identity.toHexString()} player={p} />
+      ))}
+
+      {[...projectiles.values()].map((proj) => (
+        <ProjectileDot key={String(proj.projectileId)} projectile={proj} />
       ))}
     </Canvas>
   );

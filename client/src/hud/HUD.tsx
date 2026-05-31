@@ -5,14 +5,12 @@ import { PlayerData } from "../types";
 
 interface Props {
   myPlayer: PlayerData | null;
-  onQuizAnswer: (correct: boolean) => void;
   onBonusAnswer: (correct: boolean) => void;
 }
 
-export function HUD({ myPlayer, onQuizAnswer, onBonusAnswer }: Props) {
+export function HUD({ myPlayer, onBonusAnswer }: Props) {
   if (!myPlayer) return null;
 
-  const inQuiz = myPlayer.status === "in_quiz";
   const hasBonus = myPlayer.bonusQuestionPending;
 
   return (
@@ -49,9 +47,8 @@ export function HUD({ myPlayer, onQuizAnswer, onBonusAnswer }: Props) {
         )}
       </div>
 
-      {/* Quiz popups */}
-      {inQuiz && <QuizPopup timeLimit={15} onAnswer={onQuizAnswer} />}
-      {!inQuiz && hasBonus && <QuizPopup isBonus timeLimit={20} onAnswer={onBonusAnswer} />}
+      {/* Bonus quiz popup */}
+      {hasBonus && <QuizPopup isBonus timeLimit={20} onAnswer={onBonusAnswer} />}
     </>
   );
 }
