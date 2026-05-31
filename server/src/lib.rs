@@ -539,9 +539,11 @@ pub fn move_projectiles(ctx: &ReducerContext, _sched: ProjectileTickSchedule) {
             if dx < 0.6 && dz < 0.6 {
                 if target.shield_active && target.character_type == "black" {
                     proj.direction = -proj.direction;
+                    proj.owner_identity = target.identity; // reflected bullet now "owned" by shielder
                     reflected = true;
                 } else if target.status == "alive" || target.status == "in_quiz" {
-                    target.pos_z += proj.direction as f32;
+                    target.lives = target.lives.saturating_sub(1);
+                    target.status = if target.lives == 0 { "eliminated".to_string() } else { target.status };
                     ctx.db.player().identity().update(target);
                     hit = true;
                 }
@@ -551,6 +553,7 @@ pub fn move_projectiles(ctx: &ReducerContext, _sched: ProjectileTickSchedule) {
 
         if hit {
             ctx.db.projectile().projectile_id().delete(proj.projectile_id);
+            check_win_condition(ctx, &proj.room_code);
         } else {
             if reflected {
                 // Also bounce back 1 tile

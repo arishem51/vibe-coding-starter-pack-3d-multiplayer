@@ -25,6 +25,7 @@ export default function App() {
   const [shaking, setShaking] = useState(false);
   const identityRef = useRef<Identity | null>(null);
   const myRoomCodeRef = useRef<string | null>(null);
+  const prevLivesRef = useRef<number | null>(null);
 
   const {
     screen, setScreen, setIdentity, setRoomCode, setRoom,
@@ -164,14 +165,27 @@ export default function App() {
     if (myPlayer.shieldActive) return;
     if (myPlayer.status !== "alive") return;
     conn.reducers.carHit({});
-    setShaking(true);
-    setTimeout(() => setShaking(false), 400);
   }, [myPlayer]);
 
   const handleCrossedCarRoad = useCallback(() => {
     if (!conn || myPlayer?.status !== "alive") return;
     conn.reducers.crossedCarRoad({});
   }, [myPlayer]);
+
+  // Shake on any lives decrease (car hit or projectile hit)
+  useEffect(() => {
+    if (!myPlayer) { prevLivesRef.current = null; return; }
+    const prev = prevLivesRef.current;
+    prevLivesRef.current = myPlayer.lives;
+    if (prev !== null && myPlayer.lives < prev) {
+      // Snap local state to server's pushed-back position and cancel pending moves
+      playerState.currentRow = Math.round(myPlayer.posZ);
+      playerState.currentTile = Math.round(myPlayer.posX);
+      playerState.movesQueue = [];
+      setShaking(true);
+      setTimeout(() => setShaking(false), 400);
+    }
+  }, [myPlayer?.lives]);
 
   // Block movement while bonus quiz is open
   useEffect(() => {

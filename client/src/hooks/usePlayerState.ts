@@ -12,8 +12,8 @@ export const playerState = {
 // Avoid importing Three at module level — use type only
 import type * as THREE from "three";
 
-export function queueMove(dir: "forward" | "backward" | "left" | "right") {
-  if (playerState.blocked) return;
+export function queueMove(dir: "forward" | "backward" | "left" | "right"): { tile: number; row: number } | null {
+  if (playerState.blocked) return null;
 
   const finalRow =
     dir === "forward"
@@ -34,10 +34,11 @@ export function queueMove(dir: "forward" | "backward" | "left" | "right") {
       : playerState.currentTile;
 
   // Boundary check
-  if (finalRow < 0) return;
-  if (finalTile < minTileIndex || finalTile > maxTileIndex) return;
+  if (finalRow < 0) return null;
+  if (finalTile < minTileIndex || finalTile > maxTileIndex) return null;
 
   playerState.movesQueue.push(dir);
+  return { tile: finalTile, row: finalRow };
 }
 
 export function stepCompleted(
