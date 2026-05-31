@@ -173,6 +173,11 @@ export default function App() {
     conn.reducers.crossedCarRoad({});
   }, [myPlayer]);
 
+  // Block movement while bonus quiz is open
+  useEffect(() => {
+    playerState.blocked = !!(myPlayer?.bonusQuestionPending);
+  }, [myPlayer?.bonusQuestionPending]);
+
   const handlePositionUpdate = useCallback((x: number, z: number) => {
     // Position sent in the 20Hz interval loop above
   }, []);

@@ -387,7 +387,7 @@ pub fn crossed_car_road(ctx: &ReducerContext) -> Result<(), String> {
     let mut player = ctx.db.player().identity().find(ctx.sender())
         .ok_or_else(|| "Player not found".to_string())?;
 
-    if player.status != "alive" {
+    if player.status != "alive" || player.character_type == "ghost" {
         return Ok(());
     }
 

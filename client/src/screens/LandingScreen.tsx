@@ -3,6 +3,8 @@ interface Props {
   onJoinRoom: () => void;
 }
 
+const isAdmin = localStorage.getItem("isAdmin") === "me";
+
 export function LandingScreen({ onCreateRoom, onJoinRoom }: Props) {
   return (
     <div style={overlay}>
@@ -13,10 +15,12 @@ export function LandingScreen({ onCreateRoom, onJoinRoom }: Props) {
         <p style={{ color: "#aaa", textAlign: "center", marginBottom: 32, fontSize: 14 }}>
           Sinh tồn bằng tri thức
         </p>
-        <button style={{ ...btn, background: "#4a90e2" }} onClick={onCreateRoom}>
-          🏠 Tạo phòng (Admin)
-        </button>
-        <button style={{ ...btn, background: "#2e7d32", marginTop: 12 }} onClick={onJoinRoom}>
+        {isAdmin && (
+          <button style={{ ...btn, background: "#4a90e2" }} onClick={onCreateRoom}>
+            🏠 Tạo phòng (Admin)
+          </button>
+        )}
+        <button style={{ ...btn, background: "#2e7d32", marginTop: isAdmin ? 12 : 0 }} onClick={onJoinRoom}>
           🚪 Vào phòng (Player)
         </button>
       </div>
