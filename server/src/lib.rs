@@ -103,11 +103,16 @@ fn id_to_room_code(id: u64) -> String {
 }
 
 fn check_win_condition(ctx: &ReducerContext, room_code: &str) {
-    let alive: Vec<PlayerData> = ctx.db.player().iter()
-        .filter(|p| p.room_code == room_code && (p.status == "alive" || p.status == "in_quiz") && !p.is_admin)
-        .collect();
+    let total_non_admin = ctx.db.player().iter()
+        .filter(|p| p.room_code == room_code && !p.is_admin)
+        .count();
 
-    if alive.len() <= 1 {
+    let alive = ctx.db.player().iter()
+        .filter(|p| p.room_code == room_code && (p.status == "alive" || p.status == "in_quiz") && !p.is_admin)
+        .count();
+
+    let should_end = alive == 0 || (total_non_admin > 1 && alive <= 1);
+    if should_end {
         if let Some(mut room) = ctx.db.room().iter().find(|r| r.room_code == room_code) {
             if room.status == "playing" {
                 room.status = "ended".to_string();
