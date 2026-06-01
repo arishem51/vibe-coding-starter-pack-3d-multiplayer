@@ -175,7 +175,7 @@ export default function App() {
   // ── Callbacks ───────────────────────────────────────────────────────────────
   const handleCarHit = useCallback(() => {
     if (!conn || !myPlayer) return;
-    if (myPlayer.characterType === "ghost") return;
+    if (myPlayer.isAdmin) return;
     if (myPlayer.shieldActive) return;
     if (myPlayer.status !== "alive") return;
     conn.reducers.carHit({});

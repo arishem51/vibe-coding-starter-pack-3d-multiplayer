@@ -5,7 +5,7 @@
  */
 
 import React, { useRef } from 'react';
-import { Canvas } from '@react-three/fiber';
+import { Canvas, useFrame } from '@react-three/fiber';
 import { Box, Plane, Grid, Sky } from '@react-three/drei';
 import * as THREE from 'three';
 import { DirectionalLightHelper, CameraHelper } from 'three'; // Import the helper
@@ -15,22 +15,51 @@ import { Identity } from 'spacetimedb';
 import { Player } from './Player';
 
 interface GameSceneProps {
-  players: ReadonlyMap<string, PlayerData>; // Receive the map
+  players: ReadonlyMap<string, PlayerData>;
   localPlayerIdentity: Identity | null;
-  onPlayerRotation?: (rotation: THREE.Euler) => void; // Optional callback for player rotation
-  currentInputRef?: React.MutableRefObject<InputState>; // Add input state ref prop
-  isDebugPanelVisible?: boolean; // Prop to indicate if the debug panel is visible
+  onPlayerRotation?: (rotation: THREE.Euler) => void;
+  currentInputRef?: React.MutableRefObject<InputState>;
+  isDebugPanelVisible?: boolean;
 }
 
-export const GameScene: React.FC<GameSceneProps> = ({ 
-  players, 
+// Ground plane and grid that follow the local player on Z so the ground appears infinite
+function FollowGround({ localPlayerZ }: { localPlayerZ: React.MutableRefObject<number> }) {
+  const groupRef = useRef<THREE.Group>(null!);
+
+  useFrame(() => {
+    if (groupRef.current) groupRef.current.position.z = localPlayerZ.current;
+  });
+
+  return (
+    <group ref={groupRef}>
+      <Plane
+        args={[200, 200]}
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, -0.001, 0]}
+        receiveShadow
+      >
+        <meshStandardMaterial color="#606060" />
+      </Plane>
+      <Grid
+        position={[0, 0, 0]}
+        args={[200, 200]}
+        cellSize={2}
+        cellThickness={1}
+        cellColor={new THREE.Color('#888888')}
+      />
+    </group>
+  );
+}
+
+export const GameScene: React.FC<GameSceneProps> = ({
+  players,
   localPlayerIdentity,
   onPlayerRotation,
-  currentInputRef, // Receive input state ref
-  isDebugPanelVisible = false // Destructure the new prop
+  currentInputRef,
+  isDebugPanelVisible = false
 }) => {
-  // Ref for the main directional light
-  const directionalLightRef = useRef<THREE.DirectionalLight>(null!); 
+  const directionalLightRef = useRef<THREE.DirectionalLight>(null!);
+  const localPlayerZRef = useRef<number>(0); 
 
   return (
     <Canvas 
@@ -73,37 +102,21 @@ export const GameScene: React.FC<GameSceneProps> = ({
         </>
       )}
       
-      {/* Visible Background Plane (darker, receives shadows) */}
-      <Plane 
-        args={[200, 200]} 
-        rotation={[-Math.PI / 2, 0, 0]} 
-        position={[0, -0.001, 0]} 
-        receiveShadow={true} 
-      >
-        <meshStandardMaterial color="#606060" /> { /* Changed to darker gray */ }
-      </Plane>
-
-      {/* Simplified Grid Helper (mid-gray lines) */}
-      <Grid 
-        position={[0, 0, 0]} 
-        args={[200, 200]} 
-        cellSize={2} 
-        cellThickness={1}
-        cellColor={new THREE.Color('#888888')} // Mid-gray grid lines
-      />
+      <FollowGround localPlayerZ={localPlayerZRef} />
 
       {/* Render Players */}
       {Array.from(players.values()).map((player) => {
         const isLocal = localPlayerIdentity?.toHexString() === player.identity.toHexString();
+        if (isLocal) localPlayerZRef.current = player.position.z;
         return (
-          <Player 
-            key={player.identity.toHexString()} 
+          <Player
+            key={player.identity.toHexString()}
             playerData={player}
             isLocalPlayer={isLocal}
             onRotationChange={isLocal ? onPlayerRotation : undefined}
             currentInputRef={isLocal ? currentInputRef : undefined}
-            isDebugArrowVisible={isLocal ? isDebugPanelVisible : false} // Pass down arrow visibility
-            isDebugPanelVisible={isDebugPanelVisible} // Pass down general debug visibility
+            isDebugArrowVisible={isLocal ? isDebugPanelVisible : false}
+            isDebugPanelVisible={isDebugPanelVisible}
           />
         );
       })}

@@ -27,7 +27,7 @@ pub struct PlayerData {
     pub lives: u8,
     pub status: String, // "waiting" | "alive" | "in_quiz" | "eliminated"
     pub is_admin: bool,
-    pub character_type: String, // "white" | "black" | "ghost"
+    pub character_type: String, // "white" | "black"
     pub ammo: u8,
     pub shield_active: bool,
     pub shield_cooldown: bool,
@@ -103,6 +103,23 @@ fn id_to_room_code(id: u64) -> String {
     String::from_utf8(code.to_vec()).unwrap()
 }
 
+fn end_room(ctx: &ReducerContext, room_code: &str) {
+    if let Some(mut room) = ctx.db.room().iter().find(|r| r.room_code == room_code) {
+        if room.status != "ended" {
+            room.status = "ended".to_string();
+            ctx.db.room().room_id().update(room);
+            // Clean up all player entries so they don't ghost future sessions
+            let to_delete: Vec<Identity> = ctx.db.player().iter()
+                .filter(|p| p.room_code == room_code)
+                .map(|p| p.identity)
+                .collect();
+            for id in to_delete {
+                ctx.db.player().identity().delete(id);
+            }
+        }
+    }
+}
+
 fn check_win_condition(ctx: &ReducerContext, room_code: &str) {
     let total_non_admin = ctx.db.player().iter()
         .filter(|p| p.room_code == room_code && !p.is_admin)
@@ -114,12 +131,7 @@ fn check_win_condition(ctx: &ReducerContext, room_code: &str) {
 
     let should_end = alive == 0 || (total_non_admin > 1 && alive <= 1);
     if should_end {
-        if let Some(mut room) = ctx.db.room().iter().find(|r| r.room_code == room_code) {
-            if room.status == "playing" {
-                room.status = "ended".to_string();
-                ctx.db.room().room_id().update(room);
-            }
-        }
+        end_room(ctx, room_code);
     }
 }
 
@@ -203,7 +215,7 @@ pub fn create_room(ctx: &ReducerContext, display_name: String) -> Result<(), Str
         lives: 3,
         status: "waiting".to_string(),
         is_admin: true,
-        character_type: "ghost".to_string(),
+        character_type: "white".to_string(),
         ammo: 0,
         shield_active: false,
         shield_cooldown: false,
@@ -239,7 +251,7 @@ pub fn join_room(ctx: &ReducerContext, room_code: String, player_name: String) -
         lives: 3,
         status: "waiting".to_string(),
         is_admin,
-        character_type: if is_admin { "ghost" } else { "white" }.to_string(),
+        character_type: "white".to_string(),
         ammo: 0,
         shield_active: false,
         shield_cooldown: false,
@@ -260,10 +272,6 @@ pub fn select_character(ctx: &ReducerContext, character_type: String) -> Result<
 
     let mut player = ctx.db.player().identity().find(ctx.sender())
         .ok_or_else(|| "Player not found".to_string())?;
-
-    if player.is_admin {
-        return Err("Admin is always ghost".to_string());
-    }
 
     let room = ctx.db.room().iter()
         .find(|r| r.room_code == player.room_code)
@@ -325,12 +333,7 @@ pub fn force_end(ctx: &ReducerContext, room_code: String) -> Result<(), String> 
         return Err("Only admin can force end".to_string());
     }
 
-    let mut room = ctx.db.room().iter()
-        .find(|r| r.room_code == room_code)
-        .ok_or_else(|| "Room not found".to_string())?;
-
-    room.status = "ended".to_string();
-    ctx.db.room().room_id().update(room);
+    end_room(ctx, &room_code);
     Ok(())
 }
 
@@ -366,7 +369,7 @@ pub fn car_hit(ctx: &ReducerContext) -> Result<(), String> {
     let mut player = ctx.db.player().identity().find(ctx.sender())
         .ok_or_else(|| "Player not found".to_string())?;
 
-    if player.character_type == "ghost" || player.shield_active || player.status != "alive" {
+    if player.is_admin || player.shield_active || player.status != "alive" {
         return Ok(());
     }
 
@@ -387,7 +390,7 @@ pub fn crossed_car_road(ctx: &ReducerContext) -> Result<(), String> {
     let mut player = ctx.db.player().identity().find(ctx.sender())
         .ok_or_else(|| "Player not found".to_string())?;
 
-    if player.status != "alive" || player.character_type == "ghost" {
+    if player.status != "alive" || player.is_admin {
         return Ok(());
     }
 
@@ -463,7 +466,7 @@ pub fn shoot(ctx: &ReducerContext, direction: i32) -> Result<(), String> {
         owner_identity: ctx.sender(),
         room_code,
         pos_x,
-        pos_z: pos_z + direction as f32,
+        pos_z,
         direction,
         range_remaining: 10,
     });
@@ -531,7 +534,7 @@ pub fn move_projectiles(ctx: &ReducerContext, _sched: ProjectileTickSchedule) {
 
         for mut target in players {
             if target.identity == proj.owner_identity { continue; }
-            if target.character_type == "ghost" { continue; }
+            if target.is_admin { continue; }
 
             let dx = (target.pos_x - proj.pos_x).abs();
             let dz = (target.pos_z - proj.pos_z).abs();

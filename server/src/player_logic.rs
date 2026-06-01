@@ -34,7 +34,7 @@
 
 use spacetimedb::ReducerContext;
 // Import common structs and constants
-use crate::common::{Vector3, InputState, PLAYER_SPEED, SPRINT_MULTIPLIER};
+use crate::common::{Vector3, InputState, PLAYER_SPEED, SPRINT_MULTIPLIER, WORLD_X_BOUNDARY};
 // Import the PlayerData struct definition (assuming it's in lib.rs or common.rs)
 use crate::PlayerData;
 
@@ -109,9 +109,9 @@ pub fn calculate_new_position(position: &Vector3, rotation: &Vector3, input: &In
         new_position.x += direction.x;
         new_position.z += direction.z;
         
-        // For terrain, you could implement height logic here if needed
-        // Example: new_position.y = calculate_terrain_height(new_position.x, new_position.z);
-        
+        // X has a fixed boundary; Z is unlimited (player advances indefinitely)
+        new_position.x = new_position.x.clamp(-WORLD_X_BOUNDARY, WORLD_X_BOUNDARY);
+
         return new_position;
     } else {
         // No movement input, return current position

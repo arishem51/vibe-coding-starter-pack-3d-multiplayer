@@ -49,3 +49,5 @@ pub struct InputState {
 
 pub const PLAYER_SPEED: f32 = 7.5;
 pub const SPRINT_MULTIPLIER: f32 = 1.8;
+
+pub const WORLD_X_BOUNDARY: f32 = 10.0;

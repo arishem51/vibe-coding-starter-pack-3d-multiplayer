@@ -15,7 +15,6 @@ interface Props {
 const CHAR_COLORS: Record<string, number> = {
   white: 0xffffff,
   black: 0x222222,
-  ghost: 0xaaaaff,
 };
 
 export function LocalPlayer({ characterType, shieldActive, onCrossedCarRoad, onPositionUpdate }: Props) {

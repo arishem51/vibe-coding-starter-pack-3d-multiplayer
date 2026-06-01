@@ -1,3 +1,4 @@
+import { useState, useCallback } from "react";
 import { Canvas } from "@react-three/fiber";
 import { Map } from "./Map";
 import { LocalPlayer } from "./LocalPlayer";
@@ -22,12 +23,14 @@ export function Scene({
   onCrossedCarRoad,
   onPositionUpdate,
 }: Props) {
+  const [currentRow, setCurrentRow] = useState(0);
   const players = useGameStore((s) => s.players);
   const projectiles = useGameStore((s) => s.projectiles);
   const room = useGameStore((s) => s.room);
   const startedAtMs = room?.startedAt ? Number(room.startedAt / 1000n) : Date.now();
+  const roomCode = room?.roomCode ?? null;
   const remotePlayers = [...players.values()].filter(
-    (p) => p.identity.toHexString() !== myIdentityHex
+    (p) => p.identity.toHexString() !== myIdentityHex && p.roomCode === roomCode
   );
 
   return (
@@ -39,20 +42,23 @@ export function Scene({
       <ambientLight intensity={0.8} />
       <directionalLight position={[-100, -100, 200]} intensity={1} />
 
-      <Map onCarHit={onCarHit} shieldActive={shieldActive} startedAtMs={startedAtMs} />
+      <Map currentRow={currentRow} onCarHit={onCarHit} shieldActive={shieldActive} startedAtMs={startedAtMs} />
 
       <LocalPlayer
         characterType={characterType}
         shieldActive={shieldActive}
         onCrossedCarRoad={onCrossedCarRoad}
-        onPositionUpdate={onPositionUpdate}
+        onPositionUpdate={useCallback((tile: number, row: number) => {
+          setCurrentRow(row);
+          onPositionUpdate(tile, row);
+        }, [onPositionUpdate])}
       />
 
       {remotePlayers.map((p) => (
         <RemotePlayer key={p.identity.toHexString()} player={p} />
       ))}
 
-      {[...projectiles.values()].map((proj) => (
+      {[...projectiles.values()].filter((proj) => proj.roomCode === roomCode).map((proj) => (
         <ProjectileDot key={String(proj.projectileId)} projectile={proj} />
       ))}
     </Canvas>

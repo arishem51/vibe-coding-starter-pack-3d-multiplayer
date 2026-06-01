@@ -29,7 +29,7 @@ export function CharacterSelectScreen({ onSelect }: Props) {
       <div style={card}>
         <h2 style={{ color: "#fff", marginBottom: 8, textAlign: "center" }}>Chọn nhân vật</h2>
         <p style={{ color: "#666", fontSize: 13, textAlign: "center", marginBottom: 28 }}>
-          Admin là Ghost — không thể thắng
+          Mặc định Xạ Thủ nếu chưa chọn khi bắt đầu
         </p>
         <div style={{ display: "flex", gap: 16 }}>
           {chars.map((c) => (

@@ -8,12 +8,11 @@ interface Props {
 const CHAR_COLORS: Record<string, number> = {
   white: 0xffffff,
   black: 0x222222,
-  ghost: 0xaaaaff,
 };
 
 export function RemotePlayer({ player }: Props) {
   const color = CHAR_COLORS[player.characterType] ?? 0xffffff;
-  const opacity = player.characterType === "ghost" ? 0.5 : 0.35;
+  const opacity = player.isAdmin ? 0.55 : 0.35;
   const isEliminated = player.status === "eliminated";
 
   if (isEliminated) return null;

@@ -16,7 +16,7 @@ export interface PlayerData {
   lives: number;
   status: string; // "waiting" | "alive" | "in_quiz" | "eliminated"
   isAdmin: boolean;
-  characterType: string; // "white" | "black" | "ghost"
+  characterType: string; // "white" | "black"
   ammo: number;
   shieldActive: boolean;
   shieldCooldown: boolean;
