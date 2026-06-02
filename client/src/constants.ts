@@ -3,7 +3,10 @@ export const minTileIndex = -30;
 export const maxTileIndex = 30;
 export const tilesPerRow = maxTileIndex - minTileIndex + 1;
 
-export const DB_HOST = `${window.location.hostname}:3000`;
+const _dbHost = import.meta.env.VITE_DB_HOST ?? `${window.location.hostname}:3000`;
+const _isLocal = _dbHost.startsWith('localhost') || _dbHost.startsWith('127.');
+export const DB_HOST = _dbHost;
+export const DB_URI = `${_isLocal ? 'ws' : 'wss'}://${_dbHost}`;
 export const DB_NAME = "spst-crossy";
 
 // Map row types: 0=safe, 1=road

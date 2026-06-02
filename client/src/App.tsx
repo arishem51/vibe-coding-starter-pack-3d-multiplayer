@@ -5,7 +5,7 @@ import { Identity } from "spacetimedb";
 import { useGameStore } from "./stores/gameStore";
 import { playerState } from "./hooks/usePlayerState";
 import useEventListeners from "./hooks/useEventListeners";
-import { DB_HOST, DB_NAME } from "./constants";
+import { DB_URI, DB_NAME, DB_HOST } from "./constants";
 
 import { LandingScreen } from "./screens/LandingScreen";
 import { CreateRoomScreen } from "./screens/CreateRoomScreen";
@@ -48,7 +48,7 @@ export default function App() {
     const savedToken = localStorage.getItem('stdb_token') ?? undefined;
 
     DbConnection.builder()
-      .withUri(`ws://${DB_HOST}`)
+      .withUri(DB_URI)
       .withDatabaseName(DB_NAME)
       .withCompression('none')
       .withConfirmedReads(false)
@@ -208,10 +208,6 @@ export default function App() {
 
   const handlePositionUpdate = useCallback((x: number, z: number) => {
     // Position sent in the 20Hz interval loop above
-  }, []);
-
-  const handleQuizAnswer = useCallback((correct: boolean) => {
-    conn?.reducers.submitAnswer({ isCorrect: correct });
   }, []);
 
   const handleBonusAnswer = useCallback((correct: boolean) => {
