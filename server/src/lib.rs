@@ -406,6 +406,7 @@ pub fn crossed_car_road(ctx: &ReducerContext) -> Result<(), String> {
             .wrapping_add((player.pos_z.to_bits() as u64).wrapping_mul(2246822519));
         if seed % 100 < 15 {
             player.bonus_question_pending = true;
+            player.status = "in_quiz".to_string();
         }
     }
 
@@ -419,6 +420,7 @@ pub fn submit_bonus_answer(ctx: &ReducerContext, is_correct: bool) -> Result<(),
         .ok_or_else(|| "Player not found".to_string())?;
 
     player.bonus_question_pending = false;
+    player.status = "alive".to_string();
     player.bonus_cooldown_until = ts_micros(ctx.timestamp) + 10_000_000; // 10s
 
     if is_correct {
@@ -544,7 +546,7 @@ pub fn move_projectiles(ctx: &ReducerContext, _sched: ProjectileTickSchedule) {
                     proj.direction = -proj.direction;
                     proj.owner_identity = target.identity; // reflected bullet now "owned" by shielder
                     reflected = true;
-                } else if target.status == "alive" || target.status == "in_quiz" {
+                } else if target.status == "alive" {
                     target.lives = target.lives.saturating_sub(1);
                     target.status = if target.lives == 0 { "eliminated".to_string() } else { target.status };
                     ctx.db.player().identity().update(target);
